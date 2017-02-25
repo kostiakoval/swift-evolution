@@ -9,8 +9,9 @@
 
 This is a proposal for redesigning the `Package.swift` manifest APIs provided
 by Swift Package Manager.  
-This proposal only intends to redesign the public APIs and not any actual
-underlying functionality.
+This proposal only redesigns the existing public APIs and does not add any
+new functionality; any API to be added for new functionality will happen in
+separate proposals.
 
 ## Motivation
 
@@ -21,7 +22,10 @@ several small areas which can be cleaned up to make the overall API more
 "Swifty".
 
 We would like to redesign these APIs as necessary to provide clean,
-conventions-compliant APIs that we can rely on in the future.
+conventions-compliant APIs that we can rely on in the future. Because we
+anticipate that the user community for the Swift Package Manager will grow
+considerably in Swift 4, we would like to make these changes now, before
+more packages are created using the old API.
 
 ## Proposed solution
 
@@ -326,23 +330,36 @@ access modifier is `public` for all APIs unless specified.
 
     Some general observations:
 
-    * Every package manager supports the tilde `~` operator in some form.
-    * Most people never understand `~`.
+    * Every package manager we looked at for this supports the tilde `~` operator in some form.
     * The widely accepted suggestion on how to constrain your versions is "use
       `~>`, it does the right thing".
-    * Swift package manager will probably have more novice users, because it
-      comes built-in.
-    * A lot of people even explicitly set a concrete version simply because
-      they don't know better.
-    * We think caret (`^`) has the right behaviour and is the intended use case most
-      of the time.
-    * We need to support caret in some form and also have convenience for some
-      of the common cases like tilde (`~`).
+    * It's not clear to us why this has so much traction as "the right thing", as it can
+      prevent upgrades that should be compatible (one minor version to next minor version).
+    * Most users may not really understand `~`, and just use it per recommendations.
+      See e.g. how Google created a [6-minute instructional video](https://www.youtube.com/watch?v=x4ARXyovvPc)
+      about this operator for CocoaPods.
+    * A lot of people even explicitly set a single exact version simply because
+      they don't know better. This leads to "dependency hell" (unresolvable dependencies
+      due to conflicting requirements for a package in the dependency graph).
+    * The Swift Package Manager will probably have many novice users, because it
+      comes built-in to Swift.
+    * We think caret `^` has the right behaviour most of the time. That is, you
+      should be able to specify a minimum version, and you should be willing to let
+      your package use anything after that up to the next major version. This policy
+      works if packages correctly follow semantic versioning, and it prevents "dependency
+      hell" by expressing permissive constraints.
+    * We also think caret `^` is syntactically non-obvious, and we'd prefer a syntax
+      that doesn't require reading a manual for novices to understand, even if that
+      means we break with the syntactic convention established by the other package managers which
+      support caret `^`.
+    * We'd like a convenient syntax for caret `^`, but to still support the use
+      case that tilde `~` is used for; but tilde `~` (or a single exact version) should
+      be less convenient than caret `^`, to encourge permissive dependency constraints.
 
     What we propose:
 
     * We will introduce a factory method which takes a lower bound version and
-      forms a range that goes upto the next major version i.e. caret.
+      forms a range that goes upto the next major version (i.e. caret).
 
       ```swift
       // 1.0.0 ..< 2.0.0
@@ -443,11 +460,12 @@ access modifier is `public` for all APIs unless specified.
     We propose to reorder the parameters of `Package` class to: `name`,
     `pkgConfig`, `products`, `dependencies`, `targets`, `compatibleSwiftVersions`.
 
-    The rational behind this reorder is that the most interesting parts of a
+    The rationale behind this reorder is that the most interesting parts of a
     package are its product and dependencies, so they should be at the top.
     Targets are usually important during development of the package.  Placing
     them at the end keeps it easier for the developer to jump to end of the
-    file to access them.
+    file to access them. Note that the compatibleSwiftVersions property will likely
+    be removed once we support Build Settings, but that will be discussed in a separate proposal.
 
 
     <details>
@@ -511,18 +529,18 @@ manifest version by changing the tools version using `swift package
 tools-version --set 3.1`.  However, the manifest will needed to be adjusted to
 use the older APIs manually.
 
-Unless declared in the manifest, an exisitng package will automatically default
-to Swift 3 as minimum tools version and since Swift 4 tools will also include
-the v3 manifest API, it will build as expected.
+Unless declared in the manifest, existing packages automatically default
+to the Swift 3 minimum tools version; since the Swift 4 tools will also include
+the v3 manifest API, they will build as expected.
 
 A package which needs to support both Swift 3 and Swift 4 tools will need to
-stay on the v3 manifest API and mention the compatible Swift versions as 3 and
-4, using the API described in the proposal
+stay on the v3 manifest API and support the Swift 3 language version for its
+sources, using the API described in the proposal
 [SE-0151](https://github.com/apple/swift-evolution/blob/master/proposals/0151-package-manager-swift-language-compatibility-version.md).
 
-A package which wants to use the new v4 manifest APIs will need to bump their
-minimum tools version to 4.0 using the command `$ swift package tools-version
---set-current` and then modify the manifest file with the changes described in
+An existing package which wants to use the new v4 manifest APIs will need to bump its
+minimum tools version to 4.0 or later using the command `$ swift package tools-version
+--set-current`, and then modify the manifest file with the changes described in
 this proposal.
 
 ## Alternatives considered
