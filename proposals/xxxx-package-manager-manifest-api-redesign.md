@@ -458,13 +458,13 @@ access modifier is `public` for all APIs unless specified.
 * Adjust order of parameters on `Package` class:
 
     We propose to reorder the parameters of `Package` class to: `name`,
-    `pkgConfig`, `products`, `dependencies`, `targets`, `compatibleSwiftVersions`.
+    `pkgConfig`, `products`, `dependencies`, `targets`, `swiftLanguageVersions`.
 
     The rationale behind this reorder is that the most interesting parts of a
     package are its product and dependencies, so they should be at the top.
     Targets are usually important during development of the package.  Placing
     them at the end keeps it easier for the developer to jump to end of the
-    file to access them. Note that the compatibleSwiftVersions property will likely
+    file to access them. Note that the `swiftLanguageVersions` property will likely
     be removed once we support Build Settings, but that will be discussed in a separate proposal.
 
 
