@@ -151,29 +151,15 @@ access modifier is `public` for all APIs unless specified.
     is accepted, we can directly add a default value. Otherwise, we will use a
     static factory method to provide default value for `package`.
 
-* Upgrade `SystemPackageProvider` enum to a struct.
+* Change `SystemPackageProvider` enum cases to lowerCamelCase and their payloads to array.
+
+    According to API design guidelines, everything other than types should be
+    in lowerCamelCase.
 
     This enum allows SwiftPM System Packages to emit hints in case of build
     failures due to absence of a system package. Currently, only one system
     package per system packager can be specified. We propose to allow
-    specifying multiple system packages by replacing the enum with this struct:
-
-    ```swift
-    public struct SystemPackageProvider {
-        enum PackageManager {
-            case apt
-            case brew
-        }
-    
-        /// The system package manager.
-        let packageManager: PackageManager 
-
-        /// The array of system packages.
-        let packages: [String]
-    
-        init(_ packageManager: PackageManager, packages: [String])
-    }
-    ```
+    specifying multiple system packages by changing the payload to be an array.
 
     <details>
       <summary>View diff and example</summary>
@@ -181,25 +167,13 @@ access modifier is `public` for all APIs unless specified.
 
      Diff:
     ```diff
-    -enum SystemPackageProvider {
+    enum SystemPackageProvider {
     -    case Brew(String)
-    -    case Apt(String)
-    -}
+    +    case brew([String])
 
-    +struct SystemPackageProvider {
-    +    enum PackageManager {
-    +        case apt
-    +        case brew
-    +    }
-    +
-    +    /// The system package manager.
-    +    let packageManager: PackageManager 
-    +
-    +    /// The array of system packages.
-    +    let packages: [String]
-    +
-    +    init(_ packageManager: PackageManager, packages: [String])
-    +}
+    -    case Apt(String)
+    +    case apt([String])
+    }
     ```
 
     Example:
@@ -210,10 +184,10 @@ access modifier is `public` for all APIs unless specified.
         pkgConfig: "openssl",
         providers: [
     -        .Brew("openssl"),
-    +        SystemPackageProvider(.brew, packages: ["openssl"]),
+    +        .brew(["openssl"]),
 
     -        .Apt("openssl-dev"),
-    +        SystemPackageProvider(.apt, packages: ["openssl", "libssl-dev"]),
+    +        .apt(["openssl", "libssl-dev"]),
         ]
     )
     ```
@@ -233,89 +207,109 @@ access modifier is `public` for all APIs unless specified.
     4. It may cause issues when we get support for mechanically editing target
        dependencies.
 
-* Introduce an "identity rule" to determine if an API should use an initializer
-  or a factory method:
+* Use factory methods for creating objects.
 
-    Under this rule, an entity having an identity, will use a type initializer
-    and everything else will use factory methods. `Package`, `Target` and
-    `Product` are identities. However, a product referenced in a target
-    dependency is not an identity.
+    We propose to always use factory methods to create objects except for the
+    main `Package` object. This gives a lot of flexibility and extensibility to
+    the APIs because Swift's type system can infer the top level type in a
+    context and allow using the shorthand dot syntax.
 
-    This means the `Product` enum should be converted into an identity. We
-    propose to introduce a `Product` class with two subclasses: `Executable`
-    and `Library`.  These subclasses will be nested inside `Product` class
-    instead of being a top level declaration in the module.  The major
-    advantage of nesting is that we get a namespace for products and it is easy
-    to find all the supported products when the product types grows to a large
-    number. A downside of nesting is that the product initializers will have to
-    used with the dot notation (e.g.: `.Executable(name: "tool", targets:
-    ["tool"])`) which is a little awkward because we expect factory methods to
-    use the dots.
+    Concretely, we will make these changes:
 
-    They will be defined as follow:
+    * Add a factory method `target` to `Target` class and change the current
+      initializer to private.
 
-    ```swift
-    /// Represents a product.
-    class Product {
-    
-        /// The name of the product.
-        let name: String
+        <details>
+          <summary>View example and diff</summary>
+          <p>
 
-        /// The names of the targets in this product.
-        let targets: [String]
-    
-        private init(name: String, targets: [String]) {
-            self.name = name
-            self.targets = targets
-        }
-    
-        /// Represents an executable product.
-        final class Executable: Product {
+        Example:
 
-            /// Creates an executable product with given name and targets.
-            override init(name: String, targets: [String])
-        }
-    
-        /// Represents a library product.
-        final class Library: Product {
-            /// The type of library product.
-            enum LibraryType: String {
-                case `static`
-                case `dynamic`
+        ```diff
+        let package = Package(
+            name: "Foo",
+            target: [
+    -           Target(name: "Foo", dependencies: ["Utility"]),
+    +           .target(name: "Foo", dependencies: ["Utility"]),
+            ]
+        )
+        ```
+        </p></details>
+
+    * Introduce a `Product` class with two subclasses: `Executable` and
+      `Library`.  These subclasses will be nested inside `Product` class
+      instead of being a top level declaration in the module. Nesting will give
+      us a namespace for products and it is easy to find all the supported
+      products when the product types grows to a large number. We will add two
+      factory methods to `Product` class: `library` and `executable` to create
+      respective products.
+
+        ```swift
+        /// Represents a product.
+        class Product {
+        
+            /// The name of the product.
+            let name: String
+
+            /// The names of the targets in this product.
+            let targets: [String]
+        
+            private init(name: String, targets: [String]) {
+                self.name = name
+                self.targets = targets
             }
-    
-            /// The type of the library.
-            ///
-            /// If the type is unspecified, package manager will automatically choose a type.
-            let type: LibraryType?
-    
-            /// Creates a library product.
-            init(name: String, type: LibraryType? = nil, targets: [String])
+        
+            /// Represents an executable product.
+            final class Executable: Product {
+            }
+        
+            /// Represents a library product.
+            final class Library: Product {
+                /// The type of library product.
+                enum LibraryType: String {
+                    case `static`
+                    case `dynamic`
+                }
+        
+                /// The type of the library.
+                ///
+                /// If the type is unspecified, package manager will automatically choose a type.
+                let type: LibraryType?
+        
+                /// Creates a library product.
+                private init(name: String, type: LibraryType? = nil, targets: [String])
+            }
+
+            /// Create a libary product.
+            static func library(name: String, type: LibraryType? = nil, targets: [String]) -> Library
+
+            /// Create an executable product.
+            static func executable(name: String, targets: [String]) -> Library
         }
-    }
-    ```
+        ```
 
-    <details>
-      <summary>View example</summary>
-      <p>
+        <details>
+          <summary>View example</summary>
+          <p>
 
-    Example:
+        Example:
 
-    ```swift
-    let package = Package(
-        name: "Foo",
-        target: [
-            Target(name: "Foo", dependencies: ["Utility"]),
-            Target(name: "tool", dependencies: ["Foo"]),
-        ],
-        products: [
-            .Executable(name: "tool", targets: ["tool"]), 
-            .Library(name: "Foo", targets: ["Foo"]), 
-            .Library(name: "FooDy", type: .dynamic, targets: ["Foo"]), 
-        ]
-    )
-    ```
-    </p></details>
+        ```swift
+        let package = Package(
+            name: "Foo",
+            target: [
+                .target(name: "Foo", dependencies: ["Utility"]),
+                .target(name: "tool", dependencies: ["Foo"]),
+            ],
+            products: [
+                .executable(name: "tool", targets: ["tool"]), 
+                .library(name: "Foo", targets: ["Foo"]), 
+                .library(name: "FooDy", type: .dynamic, targets: ["Foo"]), 
+            ]
+        )
+        ```
+        </p></details>
+
 
 * Special syntax for version initializers.
 
@@ -372,26 +366,35 @@ access modifier is `public` for all APIs unless specified.
       .package(url: "/SwiftyJSON", from: "1.5.8"),
       ```
 
-    * We will introduce a factory method which takes `VersionSetSpecifier`, to
+    * We will introduce a factory method which takes `Requirement`, to
       conveniently specify common ranges.
 
-      `VersionSetSpecifier` is an enum defined as follows:
+      `Requirement` is an enum defined as follows:
 
       ```swift
-      enum VersionSetSpecifier {
+      enum Requirement {
+          /// The requirement is specified by an exact version.
           case exact(Version)
+
+          /// The requirement is specified by a version range.
           case range(Range<Version>)
 
+          /// The requirement is specified by a source control revision.
+          case revision(String)
+
+          /// The requirement is specified by a source control branch.
+          case branch(String)
+
           /// Creates a specifier for an exact version.
-          static func only(_ version: Version) -> VersionSetSpecifier
+          static func only(_ version: Version) -> Requirement
 
           /// Creates a specified for a range starting at the given lower bound
           /// and going upto next major version.
-          static func uptoNextMajor(_ version: Version) -> VersionSetSpecifier
+          static func uptoNextMajor(_ version: Version) -> Requirement
 
           /// Creates a specified for a range starting at the given lower bound
           /// and going upto next minor version.
-          static func uptoNextMinor(_ version: Version) -> VersionSetSpecifier
+          static func uptoNextMinor(_ version: Version) -> Requirement
       }
       ```
 
@@ -417,7 +420,6 @@ access modifier is `public` for all APIs unless specified.
       .package(url: "/SwiftyJSON", .uptoNextMajor("1.5.8").excluding("1.6.4")),
 
       .package(url: "/SwiftyJSON", .only("1.5.8", "1.6.3")),
-
       ```
 
     * We will introduce a factory method which takes `Range<Version>`, to specify
@@ -434,6 +436,14 @@ access modifier is `public` for all APIs unless specified.
       ```swift
       // Constraint to an arbitrary closed range.
       .package(url: "/SwiftyJSON", "1.2.3"..."1.2.8"),
+      ```
+    * As specified by branch
+      [proposal](https://github.com/apple/swift-evolution/blob/master/proposals/0150-package-manager-branch-support.md),
+      we will add these factory methods:
+
+      ```swift
+      .package(url: "/SwiftyJSON", branch: "develp"),
+      .package(url: "/SwiftyJSON", revision: "e74b07278b926c9ec6f9643455ea00d1ce04a021")
       ```
 
     * We will remove all of the current factory methods:
@@ -478,9 +488,9 @@ access modifier is `public` for all APIs unless specified.
     let package = Package(
         name: "Paper",
         products: [
-            .Executable(name: "tool", targets: ["tool"]),
-            .Libary(name: "Paper", type: .static, targets: ["Paper"]),
-            .Libary(name: "PaperDy", type: .dynamic, targets: ["Paper"]),
+            .executable(name: "tool", targets: ["tool"]),
+            .libary(name: "Paper", type: .static, targets: ["Paper"]),
+            .libary(name: "PaperDy", type: .dynamic, targets: ["Paper"]),
         ],
         dependencies: [
             .package(url: "http://github.com/SwiftyJSON", from: "1.2.3"),
@@ -488,13 +498,13 @@ access modifier is `public` for all APIs unless specified.
             .package(url: "http://some/other/lib", .only("1.2.3")),
         ]
         targets: [
-            Target(
+            .target(
                 name: "tool",
                 dependencies: [
                     "Paper",
                     "SwiftyJSON"
                 ]),
-            Target(
+            .target(
                 name: "Paper",
                 dependencies: [
                     "Basic",
@@ -510,6 +520,55 @@ access modifier is `public` for all APIs unless specified.
 
     We expect to remove the `exclude` property after we get support for custom
     layouts. The exact details will be in the proposal of that feature.
+
+## Example manifests
+
+* A regular manifest.
+
+```swift
+let package = Package(
+    name: "Paper",
+    products: [
+        .executable(name: "tool", targets: ["tool"]),
+        .libary(name: "Paper", targets: ["Paper"]),
+        .libary(name: "PaperStatic", type: .static, targets: ["Paper"]),
+        .libary(name: "PaperDynamic", type: .dynamic, targets: ["Paper"]),
+    ],
+    dependencies: [
+        .package(url: "http://github.com/SwiftyJSON", from: "1.2.3"),
+        .package(url: "../CHTTPParser", .uptoNextMinor("2.2.0")),
+        .package(url: "http://some/other/lib", .only("1.2.3")),
+    ]
+    targets: [
+        .target(
+            name: "tool",
+            dependencies: [
+                "Paper",
+                "SwiftyJSON"
+            ]),
+        .target(
+            name: "Paper",
+            dependencies: [
+                "Basic",
+                .target(name: "Utility"),
+                .product(name: "CHTTPParser"),
+            ])
+    ]
+)
+```
+
+* A system package manifest.
+
+```swift
+let package = Package(
+    name: "Copenssl",
+    pkgConfig: "openssl",
+    providers: [
+        .brew(["openssl"]),
+        .apt(["openssl", "libssl-dev"]),
+    ]
+)
+```
 
 ## Impact on existing code
 
@@ -577,3 +636,42 @@ this proposal.
     require a dependency, and annoying to have to specify the name twice.
 
     This is desirable but it should be proposed separately.
+
+* Introduce an "identity rule" to determine if an API should use an initializer
+  or a factory method:
+
+    Under this rule, an entity having an identity, will use a type initializer
+    and everything else will use factory methods. `Package`, `Target` and
+    `Product` are identities. However, a product referenced in a target
+    dependency is not an identity.
+
+    We rejected this because it may become a source of confusion for users.
+    Another downside is that the product initializers will have to used with
+    the dot notation (e.g.: `.Executable(name: "tool", targets: ["tool"])`)
+    which is a little awkward because we expect factory methods and enum cases
+    to use the dot syntax. This can be solved by moving these products outside
+    of `Product` class but we think having a namespace for product provides a
+    lot of value.
+
+* Upgrade `SystemPackageProvider` enum to a struct.
+
+    We thought about upgrading `SystemPackageProvider` to a struct when we had
+    the "identity" rule but since we're dropping that, there is no need for
+    this change.
+
+    ```swift
+    public struct SystemPackageProvider {
+        enum PackageManager {
+            case apt
+            case brew
+        }
+
+        /// The system package manager.
+        let packageManager: PackageManager
+
+        /// The array of system packages.
+        let packages: [String]
+
+        init(_ packageManager: PackageManager, packages: [String])
+    }
+    ```
